@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>solarimeow GIF</title>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#111;color:#fff;margin:0;padding:22px}main{max-width:520px;margin:auto}
+.card{background:#1d1d1f;border-radius:22px;padding:18px}h1{font-size:24px;margin:0 0 6px}.muted{color:#aaa;font-size:14px}
+button,.pick{display:block;width:100%;box-sizing:border-box;border:0;border-radius:15px;padding:14px;margin-top:12px;font-size:16px;font-weight:700;text-align:center}
+.pick{background:#fff;color:#111}button{background:#7c5cff;color:#fff}button:disabled{opacity:.45}
+#preview{width:100%;max-height:340px;object-fit:contain;border-radius:14px;margin-top:14px;background:#000;display:none}
+#status{white-space:pre-wrap;background:#29292c;border-radius:13px;padding:12px;margin-top:12px;font-size:13px;min-height:18px}
+a#download{display:none;background:#34c759;color:#071b0b;text-decoration:none;border-radius:15px;padding:14px;margin-top:12px;text-align:center;font-weight:800}
+input{display:none}
+</style></head><body><main><div class="card">
+<h1>GIF → solarimeow</h1><div class="muted">Thêm “cre : solarimeow” và cố gắng ép file xuống ≤ 512KB.</div>
+<label class="pick" for="file">Chọn GIF</label><input id="file" type="file" accept="image/gif">
+<img id="preview"><button id="go" disabled>Xử lý GIF</button><div id="status">Đang tải bộ xử lý…</div><a id="download" download="solarimeow.gif">Tải GIF xuống</a>
+</div></main>
+<script src="https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.js"></script>
+<script type="module">
+const $=x=>document.querySelector(x), file=$('#file'), preview=$('#preview'), go=$('#go'), status=$('#status'), dl=$('#download');
+let selected, workerURL;
+function msg(s){status.textContent=s}
+async function boot(){
+ try{
+  const w=await fetch('https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.worker.js');
+  if(!w.ok) throw Error('worker '+w.status);
+  workerURL=URL.createObjectURL(await w.blob());
+  msg('Sẵn sàng ✓\nChọn GIF rồi bấm Xử lý GIF.');
+ }catch(e){msg('Không tải được bộ mã hóa GIF: '+e.message+'\nKiểm tra mạng rồi mở lại file.')}
+}
+boot();
+file.onchange=()=>{selected=file.files[0];dl.style.display='none';if(!selected)return;
+ if(selected.type!=='image/gif'&&!selected.name.toLowerCase().endsWith('.gif')){msg('File này không phải GIF.');go.disabled=true;return}
+ preview.src=URL.createObjectURL(selected);preview.style.display='block';go.disabled=!workerURL;
+ msg(`Đã chọn: ${selected.name}\n${(selected.size/1024).toFixed(1)} KB`);
+};
+go.onclick=async()=>{
+ if(!selected||!workerURL)return; go.disabled=true; dl.style.display='none';
+ try{
+  msg('Đang đọc GIF…');
+  const mod=await import('https://cdn.jsdelivr.net/npm/gifuct-js@2.1.2/+esm');
+  const buf=await selected.arrayBuffer(), parsed=mod.parseGIF(buf), frames=mod.decompressFrames(parsed,true);
+  if(!frames.length)throw Error('Không đọc được frame GIF');
+  const W=parsed.lsd.width,H=parsed.lsd.height;
+  // Composite frames respecting disposal.
+  const full=document.createElement('canvas');full.width=W;full.height=H;const fctx=full.getContext('2d',{willReadFrequently:true});
+  const snaps=[]; let restore=null;
+  for(let i=0;i<frames.length;i++){
+    const fr=frames[i], d=fr.dims;
+    if(fr.disposalType===3) restore=fctx.getImageData(0,0,W,H);
+    const patch=new ImageData(new Uint8ClampedArray(fr.patch),d.width,d.height);
+    const pc=document.createElement('canvas');pc.width=d.width;pc.height=d.height;pc.getContext('2d').putImageData(patch,0,0);
+    fctx.drawImage(pc,d.left,d.top);
+    snaps.push({img:fctx.getImageData(0,0,W,H),delay:Math.max(20,(fr.delay||10)*10)});
+    if(fr.disposalType===2) fctx.clearRect(d.left,d.top,d.width,d.height);
+    else if(fr.disposalType===3&&restore)fctx.putImageData(restore,0,0);
+  }
+  async function encode(scale,quality,skip){
+   return await new Promise((resolve,reject)=>{
+    const ow=Math.max(48,Math.round(W*scale)),oh=Math.max(48,Math.round(H*scale));
+    const c=document.createElement('canvas');c.width=ow;c.height=oh;const ctx=c.getContext('2d');
+    const src=document.createElement('canvas');src.width=W;src.height=H;const sx=src.getContext('2d');
+    const enc=new GIF({workers:1,quality,workerScript:workerURL,width:ow,height:oh});
+    for(let i=0;i<snaps.length;i+=skip){
+      sx.putImageData(snaps[i].img,0,0);ctx.clearRect(0,0,ow,oh);ctx.drawImage(src,0,0,ow,oh);
+      const fs=Math.max(10,Math.round(ow*.035));ctx.font=`600 ${fs}px -apple-system,Arial`;ctx.textAlign='right';ctx.textBaseline='bottom';
+      const text='cre : solarimeow',x=ow-7,y=oh-6;ctx.lineWidth=Math.max(2,fs*.18);ctx.strokeStyle='rgba(0,0,0,.75)';ctx.strokeText(text,x,y);ctx.fillStyle='white';ctx.fillText(text,x,y);
+      let delay=0;for(let j=0;j<skip&&i+j<snaps.length;j++)delay+=snaps[i+j].delay;
+      enc.addFrame(ctx,{copy:true,delay});
+    }
+    enc.on('finished',resolve);enc.on('abort',()=>reject(Error('Mã hóa bị dừng')));enc.render();
+   });
+  }
+  const tries=[[1,10,1],[.9,15,1],[.8,20,1],[.7,25,1],[.62,30,1],[.55,30,2],[.48,30,2],[.4,30,2]];
+  let out;
+  for(let i=0;i<tries.length;i++){msg(`Đang nén… ${i+1}/${tries.length}`);out=await encode(...tries[i]);if(out.size<=512*1024)break}
+  const u=URL.createObjectURL(out);dl.href=u;dl.style.display='block';
+  msg(`Xong ✓\n${(selected.size/1024).toFixed(1)} KB → ${(out.size/1024).toFixed(1)} KB`+(out.size>512*1024?'\n⚠️ GIF quá phức tạp, bản này vẫn chưa xuống 512KB.':'\n≤ 512KB ✓'));
+ }catch(e){msg('LỖI: '+(e?.message||e)+'\nChụp dòng này gửi t nếu cần sửa.')}finally{go.disabled=false}
+};
+</script></body></html>
